@@ -1,5 +1,5 @@
 from unittest import TestCase
-from src.bs_interface import BeliefStateSimple as bss
+from bsagr.bs_interface import BeliefStateSimple as bss
 
 class TestBeliefStateSimple(TestCase):
     def test_physical_state_equals(self):
