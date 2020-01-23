@@ -120,7 +120,30 @@ class BeliefStateSimple:
         :param other: belief state
         :return: belief state
         """
-        return BeliefStateSimple([(s, p) for s, p in self.states if BeliefStateSimple._has_substate_from(s, other)])
+        def selector(s):
+            return BeliefStateSimple._has_substate_from(s, other)
+        return self.select_whether(selector)
+
+    def select_whether(self, test_function):
+        """
+
+        :param test_function: accepts physical state s. If test_function returns True, state will be included into selection
+        :return: BeliefStateSimple
+        """
+        return BeliefStateSimple([(s, p) for s, p in self.states if test_function(s)])
+
+    def apply_function(self, function):
+        return [(function(s), p) for s, p in self.states]
+
+    def bucketize(self, function):
+        results = {}
+        for s, p in self.states:
+            r = function(s)
+            if r in results:
+                results[r].append((s, p))
+            else:
+                results[r] = [(s, p)]
+        return ((result, BeliefStateSimple(states)) for result, states in results.items())
 
     def __repr__(self):
         return self.states.__repr__()
