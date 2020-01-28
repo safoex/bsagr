@@ -17,6 +17,9 @@ class BeliefStateSimple:
         else:
             raise RuntimeWarning("physical_state argument should be either list or dict!")
 
+    def prob(self):
+        return sum([p for s, p in self.states])
+
     @staticmethod
     def _physical_state_equals(a, b):
         return len(deepdiff.DeepDiff(a, b)) == 0
@@ -50,12 +53,13 @@ class BeliefStateSimple:
             if is_different:
                 buckets.append((state, [i]))
         self.states = [(s, sum([self.states[i][1] for i in l])) for s, l in buckets]
+        return self
 
     def __eq__(self, other):
         if len(self.states) != len(other.states):
             return False
-        self_matched = [False for s in self.states]
-        other_matched = [False for s in other.states]
+        self_matched = [False for _ in self.states]
+        other_matched = [False for _ in other.states]
         for i, (s, p) in enumerate(self.states):
             for j, (os, op) in enumerate(other.states):
                 if not self_matched[i] and not other_matched[j] and op == p and self._physical_state_equals(s, os):
@@ -82,10 +86,10 @@ class BeliefStateSimple:
         if self._spaces_intersects(other):
             raise RuntimeWarning("you are making an AND product of two states with non-zero intersection!")
 
-        return BeliefStateSimple._overwrite_ls_by_rs(self, other)
+        return type(self)(BeliefStateSimple._overwrite_ls_by_rs(self, other).states)
 
     def __or__(self, other):
-        return BeliefStateSimple(copy.deepcopy(self.states) + copy.deepcopy(other.states))
+        return type(self)(copy.deepcopy(self.states) + copy.deepcopy(other.states)).simplify()
 
     def __mul__(self, other):
         """
@@ -112,7 +116,7 @@ class BeliefStateSimple:
         :param other: belief state
         :return: belief state
         """
-        return BeliefStateSimple(copy.deepcopy((self // other).states))
+        return type(self)(copy.deepcopy((self // other).states))
 
     def __floordiv__(self, other):
         """
@@ -120,17 +124,20 @@ class BeliefStateSimple:
         :param other: belief state
         :return: belief state
         """
+
         def selector(s):
             return BeliefStateSimple._has_substate_from(s, other)
+
         return self.select_whether(selector)
 
     def select_whether(self, test_function):
         """
 
-        :param test_function: accepts physical state s. If test_function returns True, state will be included into selection
+        :param test_function: accepts physical state s.
+        If test_function returns True, state will be included into selection
         :return: BeliefStateSimple
         """
-        return BeliefStateSimple([(s, p) for s, p in self.states if test_function(s)])
+        return type(self)([(s, p) for s, p in self.states if test_function(s)])
 
     def apply_function(self, function):
         return [(function(s), p) for s, p in self.states]
@@ -143,7 +150,7 @@ class BeliefStateSimple:
                 results[r].append((s, p))
             else:
                 results[r] = [(s, p)]
-        return ((result, BeliefStateSimple(states)) for result, states in results.items())
+        return ((result, type(self)(states)) for result, states in results.items())
 
     def __repr__(self):
         return self.states.__repr__()
@@ -154,4 +161,8 @@ class BeliefStateSimple:
         self.simplify()
         return self
 
+    def __deepcopy__(self, memo):
+        return type(self)(copy.deepcopy(self.states))
 
+    def __copy__(self):
+        return type(self)(copy.copy(self.states))
