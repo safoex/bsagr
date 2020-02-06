@@ -17,8 +17,16 @@ class BeliefStateSimple:
         else:
             raise RuntimeWarning("physical_state argument should be either list or dict!")
 
-    def prob(self):
-        return sum([p for s, p in self.states])
+    def prob(self, test_function_or_dict=None):
+        if test_function_or_dict is None:
+            return sum([p for s, p in self.states])
+        else:
+            if isinstance(test_function_or_dict, dict):
+                items = test_function_or_dict.items()
+                return sum([p for s, p in self.states if all(k in s and s[k] == v for k, v in items)])
+            else:
+                return sum([p for s, p in self.states if test_function_or_dict(s)])
+
 
     @staticmethod
     def _physical_state_equals(a, b):
@@ -99,6 +107,9 @@ class BeliefStateSimple:
         """
         return BeliefStateSimple._overwrite_ls_by_rs(self, other)
 
+    def __add__(self, other):
+        return type(self)(self.states + other.states)
+
     @staticmethod
     def _has_substate_from(lps, rbs):
         lps_keys = set(lps.keys())
@@ -138,6 +149,18 @@ class BeliefStateSimple:
         :return: BeliefStateSimple
         """
         return type(self)([(s, p) for s, p in self.states if test_function(s)])
+
+    def split_by(self, test_function):
+        """
+
+        :param test_function: function that returns True or False
+        :return: (true_states, false_states)
+        """
+        
+        return (
+            self.select_whether(test_function),
+            self.select_whether(lambda s: not test_function(s))
+        )
 
     def apply_function(self, function):
         return [(function(s), p) for s, p in self.states]
