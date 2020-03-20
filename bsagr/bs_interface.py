@@ -156,7 +156,7 @@ class BeliefStateSimple:
         :param test_function: function that returns True or False
         :return: (true_states, false_states)
         """
-        
+
         return (
             self.select_whether(test_function),
             self.select_whether(lambda s: not test_function(s))
