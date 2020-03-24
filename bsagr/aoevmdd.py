@@ -13,6 +13,7 @@ class AOBS:
         self.hash_seeds = [1343452, 12432]
         self.root = self.hash_recursive([0, 0.0])
         self.colors = ['green', 'red', 'purple']
+        self.precision = 3
 
     @staticmethod
     def hname(h):
@@ -40,7 +41,9 @@ class AOBS:
         else:
             return "black"
 
-    def req_dot_str_ver(self, h, colors):
+    def req_dot_str_ver(self, h, colors, drawn):
+        if h in drawn:
+            return ""
         hl = self.hname(h)
         n = self.nodes[h]
         hs = hl + "[label=\""
@@ -54,14 +57,15 @@ class AOBS:
         hs += "\",shape=%s, color=%s];\n" % (shape, self.get_color(h, colors))
         if self.is_or(n):
             for pc, hc in n[1:]:
-                hs += hl + "-> " + self.hname(hc) + " [ label=\"%.2f\"] ;\n" % pc
+                hs += hl + "-> " + self.hname(hc) + (" [ label=\"%."+"%d" % self.precision + "f\"] ;\n") % pc
             for _, hc in n[1:]:
-                hs += self.req_dot_str_ver(hc, colors)
+                hs += self.req_dot_str_ver(hc, colors, drawn)
         if self.is_and(n):
             for hc in n[1:]:
                 hs += hl + " -> " + self.hname(hc) + ";\n"
             for hc in n[1:]:
-                hs += self.req_dot_str_ver(hc, colors)
+                hs += self.req_dot_str_ver(hc, colors, drawn)
+        drawn[h] = True
         return hs
 
     def dot_str(self, colors=None, prefix=None):
@@ -71,7 +75,7 @@ class AOBS:
                 node[shape=circle];
         
         """ % (prefix or "aobs") \
-        + self.req_dot_str_ver(self.root, colors) \
+        + self.req_dot_str_ver(self.root, colors, {}) \
         + "\n}"
 
     def insert(self, h, tnode):
@@ -175,7 +179,7 @@ class AOBS:
                 min_clusters[h] = None
                 return None
             else:
-                min_clusters[h] = required_subset.issubset(variables[h])
+                min_clusters[h] = required_subset.issubset(variables[h]) and colors[h] is not False
                 return min_clusters[h]
         if self.is_or(n):
             if all([
@@ -186,7 +190,10 @@ class AOBS:
                 for _, hc in n[1:]:
                     min_clusters[hc] = False
             else:
-                min_clusters[h] = variables[n[1][1]]
+                min_clusters[h] = None if any([
+                self.find_min_clusters(hc, variables, colors, required_subset, min_clusters) is not False
+                for _, hc in n[1:]]
+                ) else False
             return min_clusters[h]
         assert False
 
@@ -274,6 +281,18 @@ class AOBS:
                     """
                     stack.extend(self.parents[h])
 
+    def rehash_recursive(self, h):
+        n = self.nodes[h]
+        if self.is_literal(n):
+            return self.hash_recursive(n)
+        if self.is_and(n):
+            return self.hash_recursive(['a'] + [self.rehash_recursive(hc) for hc in n[1:]])
+        if self.is_or(n):
+            return self.hash_recursive(['o'] + [(pc, self.rehash_recursive(hc)) for pc, hc in n[1:]])
+
+    def replace_with(self, h, hnew):
+        self.nodes[h] = self.nodes[hnew]
+        self.root = self.rehash_recursive(self.root)
 
     def isolate(self, h, colors):
         n = self.nodes[h]
@@ -281,7 +300,15 @@ class AOBS:
             return h
         if self.is_or(n):
             if colors[h] is None:
-                new_h = self.hash_recursive(['o'] + [(pc, self.isolate(hc, colors)) for pc, hc in n[1:]])
+                nn = ['o']
+                for pc, hc in n[1:]:
+                    nhc = self.isolate(hc, colors)
+                    nnhc = self.nodes[nhc]
+                    if self.is_or(nnhc):
+                        nn.extend((pc * pcc, hcc) for pcc, hcc in nnhc[1:])
+                    else:
+                        nn.append((pc, hc))
+                new_h = self.hash_recursive(nn)
                 self.colorize(new_h, colors, {})
                 return new_h
             else:
@@ -303,8 +330,10 @@ class AOBS:
                 blacks = []
 
                 for m in mixed:
+                    # print('pidr: ', self.nodes[m])
                     mh = self.isolate(m, colors)
                     mn = self.nodes[mh]
+                    # print('isolated: ', mn, [colors[hi] for _, hi in mn[1:]])
                     assert self.is_or(mn)
                     mred = ['o']
                     mblack = ['o']
@@ -315,6 +344,7 @@ class AOBS:
                             mblack.append((pc, hc))
                     reds.append(mred)
                     blacks.append(mblack)
+                # print("mixed: %d, good: %d"%(len(mixed), len(red)))
                 if len(mixed) == 1:
                     black_or = blacks[0]
                     red_and.append(reds[0])
@@ -332,7 +362,10 @@ class AOBS:
                 for r in red:
                     red_and.append(r)
                     black_and.append(r)
-                big_or = ['o', red_and, black_and]
+                # print('black_and: ', black_and)
+                # print('red_and: ', red_and)
+                big_or = ['o', (1, red_and), (1, black_and)]
+
                 new_h = self.hash_recursive(big_or)
                 self.colorize(new_h, colors, {})
                 return new_h
@@ -368,7 +401,10 @@ class AOBS:
             else:
                 return self.hash_recursive(nn)
 
-    def act_on(self, h, an, variables:set):
+    def act_on(self, h, an, variables: set=None):
+        if variables is None:
+            variables = self.variablize(self.hash_recursive(an), {})
+            print(variables)
         return self.hash_recursive(['a', self.remove_vars_from(h, variables), an])
 
     def act(self, cn, an):
@@ -387,6 +423,59 @@ class AOBS:
         conditions could be only single literal or 
         """
 
+    def normalize(self, h):
+        n = self.nodes[h]
+        if self.is_literal(n):
+            return 1, h
+        if self.is_and(n):
+            if len(n) == 2:
+                return self.normalize(n[1])
+            else:
+                p = 1
+                nn = ['a']
+                for hc in n[1:]:
+                    phc, newhc = self.normalize(hc)
+                    p *= phc
+                    nnhc = self.nodes[newhc]
+                    if self.is_and(nnhc):
+                        nn.extend(nnhc[1:])
+                    else:
+                        nn.append(newhc)
+                return p, self.hash_recursive(nn)
+        if self.is_or(n):
+            if len(n) == 2:
+                p, nn = self.normalize(n[1][1])
+                return p*n[1][0], nn
+            else:
+                nn_ = ((pc, *self.normalize(hc)) for pc, hc in n[1:])
+                nn = ['o']
+                for pc, pn, nhc in nn_:
+                    nnhc = self.nodes[nhc]
+                    if self.is_or(nnhc):
+                        nn.extend((pc * pn * pcc, hcc) for pcc, hcc in nnhc[1:])
+                    else:
+                        nn.append((pc * pn, nhc))
+                """
+                uniqueness
+                """
+                nd = dict()
+                for pc, hc in nn[1:]:
+                    if hc in nd:
+                        nd[hc] += pc
+                    else:
+                        nd[hc] = pc
+                nn = ['o'] + [(pc, hc) for hc, pc in nd.items()]
+                if len(nn) == 2:
+                    return nn[1]
+                """
+                probability normalization
+                """
+                norm_p = sum(pc for pc, hc in nn[1:])
+                if norm_p != 1:
+                    return norm_p, self.hash_recursive(['o'] + [(pc/norm_p, hc) for pc, hc in nn[1:]])
+                else:
+                    return 1, self.hash_recursive(nn)
+        assert False
 
     def colorize_and_split(self, h, colors, visited):
         if h in colors:
@@ -539,15 +628,28 @@ a = [
 A = AOBS()
 A.root = A.hash_recursive(a)
 colors = {}
-colors[A.vars[2][0]] = True
-colors[A.vars[2][2]] = False
-req_subset = {2,1 }
+colors[A.vars[2][2]] = True
+colors[A.vars[2][0]] = False
+ncolors = copy.deepcopy(colors)
+req_subset = {2, 1, 0}
 A.colorize(A.root, colors, {})
 variables = {}
 A.variablize(A.root, variables)
 min_clusters = {}
 A.find_min_clusters(A.root, variables, colors, req_subset, min_clusters)
+hmin = [h for h, v in min_clusters.items() if v][0]
+phmin = list(A.parents[list(A.parents[hmin])[0]])[0]
+_, phminnew = A.normalize(A.isolate(phmin, colors))
+action = ['o', (0.1, ['a', [0,5],[1,5]]), (0.9, ['a', [0,7],[1,7]])]
+res = A.act_on(phminnew, action)
+A.replace_with(phmin, res)
+_, A.root = A.normalize(A.root)
+# phminnew = A.isolate(phmin, colors)
+# A.replace_with(phmin, phminnew)
+# assert p_root == 1
+A.colorize(A.root, ncolors, {})
 from gi.repository import Gtk
 win = xdot.DotWindow()
-win.set_dotcode(bytes( A.dot_str(min_clusters, "aobs2"), 'utf-8'))
+# A.root = A.remove_vars_from(A.root, {0})
+win.set_dotcode(bytes(A.dot_str(ncolors, "aobs2"), 'utf-8'))
 Gtk.main()
