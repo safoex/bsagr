@@ -1,6 +1,9 @@
 import copy
 import xdot
 
+from gi.repository import Gtk
+
+
 class AOBS:
     def __init__(self):
         """
@@ -14,6 +17,7 @@ class AOBS:
         self.root = self.hash_recursive([0, 0.0])
         self.colors = ['green', 'red', 'purple']
         self.precision = 3
+        self.windows = []
 
     @staticmethod
     def hname(h):
@@ -68,14 +72,15 @@ class AOBS:
         drawn[h] = True
         return hs
 
-    def dot_str(self, colors=None, prefix=None):
+    def dot_str(self, colors=None, start=None, window_number=None):
         return \
         """digraph %s { 
                 rankdir=TD;
                 node[shape=circle];
         
-        """ % (prefix or "aobs") \
-        + self.req_dot_str_ver(self.root, colors, {}) \
+        """ % ("aobs") \
+        + ("" if window_number is None or window_number < 0 else "AA[label=\"%d\"shape=rectangle, color=blue];\n"%window_number) \
+        + self.req_dot_str_ver(start or self.root, colors, {}) \
         + "\n}"
 
     def insert(self, h, tnode):
@@ -113,9 +118,9 @@ class AOBS:
         if self.is_literal(node):
             hnode = node
         if self.is_and(node):
-            hnode = [self.hash_recursive(n, insert) if isinstance(n, list) else n for n in node]
+            hnode = ['a'] + sorted([self.hash_recursive(n, insert) if isinstance(n, list) else n for n in node[1:]])
         if self.is_or(node):
-            hnode = ['o'] + [(p, self.hash_recursive(n, insert)) if isinstance(n, list) else (p, n) for p, n in node[1:]]
+            hnode = ['o'] + sorted([(p, self.hash_recursive(n, insert)) if isinstance(n, list) else (p, n) for p, n in node[1:]])
         assert len(hnode)
         return self.hash(hnode, insert)
 
@@ -281,18 +286,29 @@ class AOBS:
                     """
                     stack.extend(self.parents[h])
 
-    def rehash_recursive(self, h):
+    def rehash_recursive(self, h, exception=None):
         n = self.nodes[h]
+        if exception is not None and h == exception:
+            return self.hash_recursive(n)
         if self.is_literal(n):
             return self.hash_recursive(n)
         if self.is_and(n):
-            return self.hash_recursive(['a'] + [self.rehash_recursive(hc) for hc in n[1:]])
+            return self.hash_recursive(['a'] + [self.rehash_recursive(hc, exception) for hc in n[1:]])
         if self.is_or(n):
-            return self.hash_recursive(['o'] + [(pc, self.rehash_recursive(hc)) for pc, hc in n[1:]])
+            return self.hash_recursive(['o'] + [(pc, self.rehash_recursive(hc, exception)) for pc, hc in n[1:]])
+
+    def replace_with_in(self, h, hnew, hp):
+        n = self.nodes[hp]
+        nn = [n[0]]
+        if self.is_and(n):
+            nn += [hc if hc != h else hp for hc in n[1:] ]
+        else:
+            nn += [(pc, hc) if hc != h else (pc, hp) for pc, hc in n[1:]]
+        return
 
     def replace_with(self, h, hnew):
         self.nodes[h] = self.nodes[hnew]
-        self.root = self.rehash_recursive(self.root)
+        self.root = self.rehash_recursive(self.root, h)
 
     def isolate(self, h, colors):
         n = self.nodes[h]
@@ -407,21 +423,8 @@ class AOBS:
             print(variables)
         return self.hash_recursive(['a', self.remove_vars_from(h, variables), an])
 
-    def act(self, cn, an):
-        if self.is_or(cn):
-            # for hc in
-            pass
-        """
-        time to sleep
-        """
-        if self.is_and(cn):
-            for hc in cn[1:]:
-                nc = self.nodes[hc]
-                for pcc, hcc in nc[1:]:
-                    assert self.is_literal(self.nodes[hcc])
-        """
-        conditions could be only single literal or 
-        """
+
+
 
     def normalize(self, h):
         n = self.nodes[h]
@@ -477,106 +480,80 @@ class AOBS:
                     return 1, self.hash_recursive(nn)
         assert False
 
-    def colorize_and_split(self, h, colors, visited):
-        if h in colors:
-            visited[h] = True
-            return colors[h], h
-        if self.is_literal(self.nodes[h]):
-            # assuming that it is neutral -> red
-            colors[h] = True
-            visited[h] = True
-            return True, h
-        if self.is_and(self.nodes[h]):
-            h_new = ['a']
-            mixed = 0
-            for n in self.nodes[h][1:]:
-                if isinstance(n, tuple):
-                    color, node = n
-                else:
-                    color, node = self.colorize_and_split(n, colors, visited)
-                h_new.append((color, node))
-                if color == False:
-                    colors[h] = False
-                    visited[h] = True
-                    return colors[h], h
-                if color == True:
-                    continue
-                if color is None:
-                    mixed += 1
-            # went through all the nodes -> either all good or mixed:
-            if mixed == 0:
-                colors[h] = True
-                visited[h] = True
-                return (True, h_new)
-            red_and = ['a']
-            mixed_counter = 0
-            partial_black_or_draft = []
-            black_or_draft = []
-            reds = []
-            for color, n in h_new[1:]:
-                if color is None:
-                    assert n[0] == 'o'
-                    partial_or = ['o']
-                    partial_or_black = ['o']
-                    for color, prob, node in n[1:]:
-                        if color == True:
-                            partial_or.append((prob, node))
-                        else:
-                            partial_or_black.append((prob, node))
-                    red_and.append(partial_or)
-                    partial_black_or_draft.append(partial_or_black)
-                    black_or_draft.append(n)
-                if color == True:
-                    reds.append(n)
-            black_or = ['o']
-            # ? probably a corner case of len(black_or_draft) == 1
-            for i in range(len(black_or_draft)):
-                black_and_i = ['a']
-                for j in range(len(black_or_draft)):
-                    black_and_i.append(partial_black_or_draft[i] if i == j else black_or_draft[j])
-                black_or.append((1, black_and_i))
-            black_and = ['a', black_or]
-            # now add neutral or red parts of self.nodes[h] to both red_and and black_and
-            red_and.extend(reds)
-            black_and.extend(reds)
-            return ['o', (True, 1, red_and), (False, 1, black_and)]
+
 
 
 
     def get_true_literals_from_conditions(self, conditionary_functions):
         true_conditions = set()
         all_colors = {}
-        for val, f in conditionary_functions:
-            for var in self.vars[val]:
-                color = f(var)
-                upd = {hvv: color for hvv in self.vars[var][val]}
-                all_colors.update(upd)
-                true_conditions.update(set(h for h, v in upd.keys() if v))
+        for var, f in conditionary_functions:
+            for val in self.vars[var]:
+                color = f(val)
+                all_colors.update({self.vars[var][val]: color})
+                if color:
+                    true_conditions.add(self.vars[var][val])
         return true_conditions, all_colors
-        
 
-    def isolate_factorized(self, true_conditions, colors, actions):
-        """
-        Selects a subset of a belief state by means of coloring.
-        :param conditions: a list of tuples (var, f(val) -> bool)
-        :return:
-        """
-        visited = {}
-        h_iter = true_conditions[0]
-        while (not all(h in visited for h in actions)) and (not all(h in visited for h in true_conditions)):
-            new_h = self.colorize_and_split(h_iter, colors, visited)
+    def cleanup_rec(self, h, visited):
+        n = self.nodes[h]
+        visited.add(h)
+        if self.is_literal(n):
+            return
+        if self.is_and(n):
+            for hc in n[1:]:
+                if hc not in self.parents:
+                    self.parents[hc] = {h}
+                else:
+                    self.parents[hc].add(h)
+                self.cleanup_rec(hc, visited)
+        if self.is_or(n):
+            for pc, hc in n[1:]:
+                if hc not in self.parents:
+                    self.parents[hc] = {h}
+                else:
+                    self.parents[hc].add(h)
+                self.cleanup_rec(hc, visited)
+
+    def cleanup(self):
+        self.parents = {}
+        visited = set()
+        self.cleanup_rec(self.root, visited)
+        for h in set(self.nodes.keys()).difference(visited):
+            self.nodes.pop(h)
 
 
+    def draw(self, colors=None, start=None, window_number=None):
+        win = xdot.DotWindow()
+        win.set_dotcode(bytes(self.dot_str(colors, start, window_number or len(self.windows)), 'utf-8'))
+        self.windows.append(win)
 
-    def apply_action_for_substate(self, action, substate):
-        """
-        let us start from substate := and (v1,u1, ..., vN, uN),
-        action := or ( and (p1, v1, u1, ... , vN, uN), and (p2, ...), ...)
-        :param action: AOBS
-        :param substate: AOBS
-        :return:
-        """
-
+    def act(self, cfs, action, debug_draw=False):
+        true_literals, colors = self.get_true_literals_from_conditions(cfs)
+        req_subset = set()
+        for tl in true_literals:
+            req_subset.add(self.nodes[tl][0])
+        req_subset.update(self.variablize(self.hash_recursive(action), {}))
+        self.colorize(self.root, colors, {})
+        if debug_draw: self.draw(colors=colors)
+        variables = {}
+        self.variablize(self.root, variables)
+        min_clusters = {}
+        self.find_min_clusters(self.root, variables, colors, req_subset, min_clusters)
+        if debug_draw: self.draw(colors=min_clusters)
+        clusters = [h for h, v in min_clusters.items() if v]
+        new_clusters = [self.normalize(self.isolate(hcl, colors))[1] for hcl in clusters]
+        for hcl, hclnew in zip(clusters, new_clusters):
+            nhclnew = self.nodes[hclnew]
+            self.colorize(hclnew, colors, {})
+            if self.is_or(nhclnew):
+                nn = ['o'] + [(pc, self.act_on(hc, action) if colors[hc] is True else hc) for pc, hc in nhclnew[1:]]
+                self.replace_with(hcl, self.hash_recursive(nn))
+            if self.is_and(nhclnew):
+                self.replace_with(hcl, self.act_on(hclnew, action))
+        if debug_draw: self.draw()
+        _, self.root = self.normalize(self.root)
+        self.cleanup()
 
 a = [
     'a',
@@ -627,29 +604,10 @@ a = [
 
 A = AOBS()
 A.root = A.hash_recursive(a)
-colors = {}
-colors[A.vars[2][2]] = True
-colors[A.vars[2][0]] = False
-ncolors = copy.deepcopy(colors)
-req_subset = {2, 1, 0}
-A.colorize(A.root, colors, {})
-variables = {}
-A.variablize(A.root, variables)
-min_clusters = {}
-A.find_min_clusters(A.root, variables, colors, req_subset, min_clusters)
-hmin = [h for h, v in min_clusters.items() if v][0]
-phmin = list(A.parents[list(A.parents[hmin])[0]])[0]
-_, phminnew = A.normalize(A.isolate(phmin, colors))
 action = ['o', (0.1, ['a', [0,5],[1,5]]), (0.9, ['a', [0,7],[1,7]])]
-res = A.act_on(phminnew, action)
-A.replace_with(phmin, res)
-_, A.root = A.normalize(A.root)
-# phminnew = A.isolate(phmin, colors)
-# A.replace_with(phmin, phminnew)
-# assert p_root == 1
-A.colorize(A.root, ncolors, {})
-from gi.repository import Gtk
-win = xdot.DotWindow()
-# A.root = A.remove_vars_from(A.root, {0})
-win.set_dotcode(bytes(A.dot_str(ncolors, "aobs2"), 'utf-8'))
+A.act([(2, lambda c: c > 0)], action)
+A.draw()
+A.act([(2, lambda c: c > 0), (1, lambda b: b == 7)], action, debug_draw=True)
+A.draw()
+
 Gtk.main()
