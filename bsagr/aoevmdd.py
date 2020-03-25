@@ -48,6 +48,7 @@ class AOBS:
     def req_dot_str_ver(self, h, colors, drawn):
         if h in drawn:
             return ""
+        drawn[h] = True
         hl = self.hname(h)
         n = self.nodes[h]
         hs = hl + "[label=\""
@@ -69,7 +70,6 @@ class AOBS:
                 hs += hl + " -> " + self.hname(hc) + ";\n"
             for hc in n[1:]:
                 hs += self.req_dot_str_ver(hc, colors, drawn)
-        drawn[h] = True
         return hs
 
     def dot_str(self, colors=None, start=None, window_number=None):
@@ -286,29 +286,41 @@ class AOBS:
                     """
                     stack.extend(self.parents[h])
 
-    def rehash_recursive(self, h, exception=None):
+    def rehash_recursive(self, h, exceptions=None):
         n = self.nodes[h]
-        if exception is not None and h == exception:
-            return self.hash_recursive(n)
+        if exceptions is not None and h in exceptions:
+            return self.hash_recursive(exceptions[h])
         if self.is_literal(n):
             return self.hash_recursive(n)
         if self.is_and(n):
-            return self.hash_recursive(['a'] + [self.rehash_recursive(hc, exception) for hc in n[1:]])
+            return self.hash_recursive(['a'] + [self.rehash_recursive(hc, exceptions) for hc in n[1:]])
         if self.is_or(n):
-            return self.hash_recursive(['o'] + [(pc, self.rehash_recursive(hc, exception)) for pc, hc in n[1:]])
+            return self.hash_recursive(['o'] + [(pc, self.rehash_recursive(hc, exceptions)) for pc, hc in n[1:]])
 
     def replace_with_in(self, h, hnew, hp):
         n = self.nodes[hp]
         nn = [n[0]]
         if self.is_and(n):
-            nn += [hc if hc != h else hp for hc in n[1:] ]
+            nn += [hc if hc != h else hnew for hc in n[1:] ]
         else:
-            nn += [(pc, hc) if hc != h else (pc, hp) for pc, hc in n[1:]]
-        return
+            nn += [(pc, hc) if hc != h else (pc, hnew) for pc, hc in n[1:]]
+        self.nodes[hp] = nn
+
+    def is_parent(self, hp, hc):
+        n = self.nodes[hp]
+        if self.is_and(n):
+            return any((h == hc for h in n[1:]))
+        if self.is_or(n):
+            return any((h == hc for p, h in n[1:]))
+        return False
 
     def replace_with(self, h, hnew):
-        self.nodes[h] = self.nodes[hnew]
-        self.root = self.rehash_recursive(self.root, h)
+        # self.nodes[h] = self.nodes[hnew]
+
+        # for hp in self.nodes:
+        #     if self.is_parent(hp, h):
+        #         self.replace_with_in(h, hnew, hp)
+        self.root = self.rehash_recursive(self.root, exceptions={h: self.nodes[hnew]})
 
     def isolate(self, h, colors):
         n = self.nodes[h]
@@ -420,8 +432,11 @@ class AOBS:
     def act_on(self, h, an, variables: set=None):
         if variables is None:
             variables = self.variablize(self.hash_recursive(an), {})
-            print(variables)
-        return self.hash_recursive(['a', self.remove_vars_from(h, variables), an])
+        cleaned = self.remove_vars_from(h, variables)
+        if cleaned is not None:
+            return self.hash_recursive(['a', cleaned, an])
+        else:
+            return self.hash_recursive(an)
 
 
 
@@ -550,8 +565,9 @@ class AOBS:
                 nn = ['o'] + [(pc, self.act_on(hc, action) if colors[hc] is True else hc) for pc, hc in nhclnew[1:]]
                 self.replace_with(hcl, self.hash_recursive(nn))
             if self.is_and(nhclnew):
-                self.replace_with(hcl, self.act_on(hclnew, action))
-        if debug_draw: self.draw()
+                w = self.act_on(hclnew, action)
+                self.replace_with(hcl, w)
+        if debug_draw: self.draw();
         _, self.root = self.normalize(self.root)
         self.cleanup()
 
@@ -606,8 +622,9 @@ A = AOBS()
 A.root = A.hash_recursive(a)
 action = ['o', (0.1, ['a', [0,5],[1,5]]), (0.9, ['a', [0,7],[1,7]])]
 A.act([(2, lambda c: c > 0)], action)
-A.draw()
-A.act([(2, lambda c: c > 0), (1, lambda b: b == 7)], action, debug_draw=True)
-A.draw()
+# A.draw()
+A.act([(2, lambda c: c > 0), (1, lambda b: b == 7)], action, debug_draw=False)
 
+A.act([(0, lambda a: a == 7)], action, debug_draw=False)
+A.draw()
 Gtk.main()
