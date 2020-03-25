@@ -21,7 +21,7 @@ class AOBS:
 
     @staticmethod
     def hname(h):
-        return "L" + (str(h) if h >= 0 else "0"+str(abs(h)))
+        return "L" + (str(h) if h >= 0 else "0" + str(abs(h)))
 
     @staticmethod
     def get_var_name(v):
@@ -62,7 +62,7 @@ class AOBS:
         hs += "\",shape=%s, color=%s];\n" % (shape, self.get_color(h, colors))
         if self.is_or(n):
             for pc, hc in n[1:]:
-                hs += hl + "-> " + self.hname(hc) + (" [ label=\"%."+"%d" % self.precision + "f\"] ;\n") % pc
+                hs += hl + "-> " + self.hname(hc) + (" [ label=\"%." + "%d" % self.precision + "f\"] ;\n") % pc
             for _, hc in n[1:]:
                 hs += self.req_dot_str_ver(hc, colors, drawn)
         if self.is_and(n):
@@ -72,16 +72,17 @@ class AOBS:
                 hs += self.req_dot_str_ver(hc, colors, drawn)
         return hs
 
-    def dot_str(self, colors=None, start=None, window_number=None):
+    def dot_str(self, colors=None, start=None, window_header=None):
         return \
-        """digraph %s { 
-                rankdir=TD;
-                node[shape=circle];
-        
-        """ % ("aobs") \
-        + ("" if window_number is None or window_number < 0 else "AA[label=\"%d\"shape=rectangle, color=blue];\n"%window_number) \
-        + self.req_dot_str_ver(start or self.root, colors, {}) \
-        + "\n}"
+            """digraph %s { 
+                    rankdir=TD;
+                    node[shape=circle];
+            
+            """ % ("aobs") \
+            + (
+                "" if window_header is None or (isinstance(window_header, int) and window_header < 0) else "AA[label=\"%s\"shape=rectangle, color=blue];\n" % str(window_header)) \
+            + self.req_dot_str_ver(start or self.root, colors, {}) \
+            + "\n}"
 
     def insert(self, h, tnode):
         if h not in self.nodes:
@@ -120,7 +121,8 @@ class AOBS:
         if self.is_and(node):
             hnode = ['a'] + sorted([self.hash_recursive(n, insert) if isinstance(n, list) else n for n in node[1:]])
         if self.is_or(node):
-            hnode = ['o'] + sorted([(p, self.hash_recursive(n, insert)) if isinstance(n, list) else (p, n) for p, n in node[1:]])
+            hnode = ['o'] + sorted(
+                [(p, self.hash_recursive(n, insert)) if isinstance(n, list) else (p, n) for p, n in node[1:]])
         assert len(hnode)
         return self.hash(hnode, insert)
 
@@ -168,7 +170,7 @@ class AOBS:
     def colors_from_variables(self, variables: dict, required_subset: set):
         return {h: required_subset.issubset(vs) for h, vs in variables.items()}
 
-    def find_min_clusters(self, h,  variables: dict, colors: dict, required_subset: set, min_clusters: dict):
+    def find_min_clusters(self, h, variables: dict, colors: dict, required_subset: set, min_clusters: dict):
         if h in min_clusters:
             return min_clusters[h]
         n = self.nodes[h]
@@ -196,12 +198,11 @@ class AOBS:
                     min_clusters[hc] = False
             else:
                 min_clusters[h] = None if any([
-                self.find_min_clusters(hc, variables, colors, required_subset, min_clusters) is not False
-                for _, hc in n[1:]]
+                    self.find_min_clusters(hc, variables, colors, required_subset, min_clusters) is not False
+                    for _, hc in n[1:]]
                 ) else False
             return min_clusters[h]
         assert False
-
 
     def colorize(self, h, colors, visited):
         if h in colors:
@@ -235,7 +236,6 @@ class AOBS:
             if has_true and has_false:
                 return self.set_color(h, colors, visited, None)
             return self.set_color(h, colors, visited, has_true)
-
 
     @staticmethod
     def get_next_not_visited(stack, visited):
@@ -301,7 +301,7 @@ class AOBS:
         n = self.nodes[hp]
         nn = [n[0]]
         if self.is_and(n):
-            nn += [hc if hc != h else hnew for hc in n[1:] ]
+            nn += [hc if hc != h else hnew for hc in n[1:]]
         else:
             nn += [(pc, hc) if hc != h else (pc, hnew) for pc, hc in n[1:]]
         self.nodes[hp] = nn
@@ -429,7 +429,7 @@ class AOBS:
             else:
                 return self.hash_recursive(nn)
 
-    def act_on(self, h, an, variables: set=None):
+    def act_on(self, h, an, variables: set = None):
         if variables is None:
             variables = self.variablize(self.hash_recursive(an), {})
         cleaned = self.remove_vars_from(h, variables)
@@ -437,9 +437,6 @@ class AOBS:
             return self.hash_recursive(['a', cleaned, an])
         else:
             return self.hash_recursive(an)
-
-
-
 
     def normalize(self, h):
         n = self.nodes[h]
@@ -463,7 +460,7 @@ class AOBS:
         if self.is_or(n):
             if len(n) == 2:
                 p, nn = self.normalize(n[1][1])
-                return p*n[1][0], nn
+                return p * n[1][0], nn
             else:
                 nn_ = ((pc, *self.normalize(hc)) for pc, hc in n[1:])
                 nn = ['o']
@@ -490,14 +487,10 @@ class AOBS:
                 """
                 norm_p = sum(pc for pc, hc in nn[1:])
                 if norm_p != 1:
-                    return norm_p, self.hash_recursive(['o'] + [(pc/norm_p, hc) for pc, hc in nn[1:]])
+                    return norm_p, self.hash_recursive(['o'] + [(pc / norm_p, hc) for pc, hc in nn[1:]])
                 else:
                     return 1, self.hash_recursive(nn)
         assert False
-
-
-
-
 
     def get_true_literals_from_conditions(self, conditionary_functions):
         true_conditions = set()
@@ -537,10 +530,9 @@ class AOBS:
         for h in set(self.nodes.keys()).difference(visited):
             self.nodes.pop(h)
 
-
-    def draw(self, colors=None, start=None, window_number=None):
+    def draw(self, colors=None, start=None, window_header=None):
         win = xdot.DotWindow()
-        win.set_dotcode(bytes(self.dot_str(colors, start, window_number or len(self.windows)), 'utf-8'))
+        win.set_dotcode(bytes(self.dot_str(colors, start, window_header or len(self.windows)), 'utf-8'))
         self.windows.append(win)
 
     def act(self, cfs, action, debug_draw=False):
@@ -550,12 +542,12 @@ class AOBS:
             req_subset.add(self.nodes[tl][0])
         req_subset.update(self.variablize(self.hash_recursive(action), {}))
         self.colorize(self.root, colors, {})
-        if debug_draw: self.draw(colors=colors)
+        if debug_draw: self.draw(colors=colors, window_header="1\ncolorized according to conditions:\ngreen - True, red - False, purple - mixed (OR and up)")
         variables = {}
         self.variablize(self.root, variables)
         min_clusters = {}
         self.find_min_clusters(self.root, variables, colors, req_subset, min_clusters)
-        if debug_draw: self.draw(colors=min_clusters)
+        if debug_draw: self.draw(colors=min_clusters, window_header="2\nfound minimal clusters (green) which are subgraphs,\n where we should apply actions")
         clusters = [h for h, v in min_clusters.items() if v]
         new_clusters = [self.normalize(self.isolate(hcl, colors))[1] for hcl in clusters]
         for hcl, hclnew in zip(clusters, new_clusters):
@@ -567,64 +559,115 @@ class AOBS:
             if self.is_and(nhclnew):
                 w = self.act_on(hclnew, action)
                 self.replace_with(hcl, w)
-        if debug_draw: self.draw();
+        if debug_draw: self.draw(window_header="3\nbefore normalization procedure")
         _, self.root = self.normalize(self.root)
         self.cleanup()
+        if debug_draw: self.draw(window_header="4\nnormalized\nand\ncleaned!\n:)")
 
-a = [
-    'a',
-    [
-        'o',
-        (0.5, [
-            'a',
-            [
-                'o',
-                (0.4, [
-                    'a',
-                    [0, 0],
-                    [1, 0]
-                ]),
-                (0.6, [
-                    'a',
-                    [0, 1],
-                    [1, 1]
-                ])
-            ],
-            [2, 0]
-        ]),
-        (0.5, [
-            'a',
-            [0, 0],
-            [
-                'o',
-                (0.3, [
-                    'a',
-                    [1, 0],
-                    [2, 0]
-                ]),
-                (0.7, [
-                    'a',
-                    [1, 1],
-                    [2, 2]
-                ])
-            ]
-        ])
 
-    ],
-    [
-        'o',
-        (0.2, [3, 0]),
-        (0.8, [3, 1])
+if __name__ == "__main__":
+    """
+    Hi! Thank you for reading me.
+    """
+    """
+    This will be our initial Belief state.
+    'a' marks AND node, 'o' - OR node.
+    Literals are just tuples or lists of (index of variable, value)
+    """
+    """
+    You will see it as a graph so looking deep into is not necessary.
+    """
+    a = [
+        'a',
+        [
+            'o',
+            (0.5, [
+                'a',
+                [
+                    'o',
+                    (0.4, [
+                        'a',
+                        [0, 0],
+                        [1, 0]
+                    ]),
+                    (0.6, [
+                        'a',
+                        [0, 1],
+                        [1, 1]
+                    ])
+                ],
+                [2, 0]
+            ]),
+            (0.5, [
+                'a',
+                [0, 0],
+                [
+                    'o',
+                    (0.3, [
+                        'a',
+                        [1, 0],
+                        [2, 0]
+                    ]),
+                    (0.7, [
+                        'a',
+                        [1, 1],
+                        [2, 2]
+                    ])
+                ]
+            ])
+
+        ],
+        [
+            'o',
+            (0.2, [3, 0]),
+            (0.8, [3, 1])
+        ]
     ]
-]
+    A = AOBS()
+    A.root = A.hash_recursive(a)
+    A.draw(window_header="initial")
+    """
+    To initialize AOBS we recursively hash all subgraphs. 
+    hash_recursive() has insert=True by default, so (hash, subgraph) are memorized in A.nodes
+    """
+    action = \
+        ['o',
+         (0.1, [
+             'a',
+             [0, 5],
+             [1, 5]
+         ]),
+         (0.9, [
+             'a',
+             [0, 7],
+             [1, 7]]
+          )
+         ]
+    """
+    Now let's just draw the action postconditions:
+    """
+    B = AOBS()
+    B.root = B.hash_recursive(action)
+    B.draw(window_header="action")
+    """
+    We apply actions to selected substates.
+    We select substates by following logical formula: f(v0) and f(v1) and ... and f(vN)
+    some f(v_i) can be True(v_i).
+    So we pass list  [(v_i, f(v_i)), ...]
+    """
+    A.act([(2, lambda c: c > 0)], action)
+    A.draw(window_header="applied first\nfor c > 0")
+    """
+    Pfff.. magic happened.
+    """
+    A.act([(2, lambda c: c > 0), (1, lambda b: b == 7)], action, debug_draw=False)
+    A.draw(window_header="then for \nc > 0 and b == 7")
+    """
+    And once more time!
+    """
+    """
+    To look inside turn on the parameter "debug_draw"
+    """
+    A.act([(0, lambda a: a == 7)], action, debug_draw=True)
 
-A = AOBS()
-A.root = A.hash_recursive(a)
-action = ['o', (0.1, ['a', [0,5],[1,5]]), (0.9, ['a', [0,7],[1,7]])]
-A.act([(2, lambda c: c > 0)], action)
-# A.draw()
-A.act([(2, lambda c: c > 0), (1, lambda b: b == 7)], action, debug_draw=False)
-
-A.act([(0, lambda a: a == 7)], action, debug_draw=False)
-A.draw()
-Gtk.main()
+    Gtk.main()
