@@ -2,6 +2,8 @@ import copy
 import xdot
 
 from gi.repository import Gtk
+import functools
+import operator
 
 
 class AOBS:
@@ -119,10 +121,10 @@ class AOBS:
         if self.is_literal(node):
             hnode = node
         if self.is_and(node):
-            hnode = ['a'] + sorted([self.hash_recursive(n, insert) if isinstance(n, list) else n for n in node[1:]])
+            hnode = ['a'] + sorted([self.hash_recursive(n, insert) if isinstance(n, list) or isinstance(n, tuple) else n for n in node[1:]])
         if self.is_or(node):
             hnode = ['o'] + sorted(
-                [(p, self.hash_recursive(n, insert)) if isinstance(n, list) else (p, n) for p, n in node[1:]])
+                [(p, self.hash_recursive(n, insert)) if isinstance(n, list) or isinstance(n, tuple) else (p, n) for p, n in node[1:]])
         assert len(hnode)
         return self.hash(hnode, insert)
 
@@ -358,10 +360,8 @@ class AOBS:
                 blacks = []
 
                 for m in mixed:
-                    # print('pidr: ', self.nodes[m])
                     mh = self.isolate(m, colors)
                     mn = self.nodes[mh]
-                    # print('isolated: ', mn, [colors[hi] for _, hi in mn[1:]])
                     assert self.is_or(mn)
                     mred = ['o']
                     mblack = ['o']
@@ -372,7 +372,6 @@ class AOBS:
                             mblack.append((pc, hc))
                     reds.append(mred)
                     blacks.append(mblack)
-                # print("mixed: %d, good: %d"%(len(mixed), len(red)))
                 if len(mixed) == 1:
                     black_or = blacks[0]
                     red_and.append(reds[0])
@@ -390,8 +389,6 @@ class AOBS:
                 for r in red:
                     red_and.append(r)
                     black_and.append(r)
-                # print('black_and: ', black_and)
-                # print('red_and: ', red_and)
                 big_or = ['o', (1, red_and), (1, black_and)]
 
                 new_h = self.hash_recursive(big_or)
@@ -535,18 +532,34 @@ class AOBS:
         win.set_dotcode(bytes(self.dot_str(colors, start, window_header or len(self.windows)), 'utf-8'))
         self.windows.append(win)
 
+    def black_colors_for_variables(self, vars_list):
+        colors = {}
+        for var in vars_list:
+            for _, h in self.vars[var].items():
+                colors[h] = False
+        return colors
+
+    def colors_for_good_literals(self, literals):
+        colors = self.black_colors_for_variables(l[0] for l in literals)
+        for hl in literals:
+            colors[self.hash_recursive(hl)] = True
+        return colors
+
     def act(self, cfs, action, debug_draw=False):
+        action_subset = self.variablize(self.hash_recursive(action), {})
         true_literals, colors = self.get_true_literals_from_conditions(cfs)
+        true_literals_initial, colors_initial = self.get_true_literals_from_conditions(cf for cf in cfs if cf[0] not in action_subset)
         req_subset = set()
-        for tl in true_literals:
+        for tl in true_literals_initial:
             req_subset.add(self.nodes[tl][0])
-        req_subset.update(self.variablize(self.hash_recursive(action), {}))
+        req_subset.update(action_subset)
+        self.colorize(self.root, colors_initial, {})
         self.colorize(self.root, colors, {})
-        if debug_draw: self.draw(colors=colors, window_header="1\ncolorized according to conditions:\ngreen - True, red - False, purple - mixed (OR and up)")
+        if debug_draw: self.draw(colors=colors_initial, window_header="1\ncolorized according to conditions:\ngreen - True, red - False, purple - mixed (OR and up)")
         variables = {}
         self.variablize(self.root, variables)
         min_clusters = {}
-        self.find_min_clusters(self.root, variables, colors, req_subset, min_clusters)
+        self.find_min_clusters(self.root, variables, colors_initial, req_subset, min_clusters)
         if debug_draw: self.draw(colors=min_clusters, window_header="2\nfound minimal clusters (green) which are subgraphs,\n where we should apply actions")
         clusters = [h for h, v in min_clusters.items() if v]
         new_clusters = [self.normalize(self.isolate(hcl, colors))[1] for hcl in clusters]
@@ -554,6 +567,22 @@ class AOBS:
             nhclnew = self.nodes[hclnew]
             self.colorize(hclnew, colors, {})
             if self.is_or(nhclnew):
+                """
+                assuming that action is OR of ANDs of literals
+                """
+                # if self.is_or(action):
+                #     action_excluding_duplicates = ['o']
+                #     local_variables = {}
+                #     self.variablize(hclnew, local_variables)
+                #     for pe, heand in action[1:]:
+                #         effect_literals = heand[1:]
+                #         action_colors = self.colors_for_good_literals(effect_literals)
+                #         self.colorize(hclnew, action_colors, {})
+                #         local_min_clusters = {}
+                #         self.find_min_clusters(hclnew, local_variables, action_colors, action_subset, local_min_clusters)
+                #         # print(local_min_clusters)
+                #         # self.draw(start=hclnew, colors=local_min_clusters)
+
                 nn = ['o'] + [(pc, self.act_on(hc, action) if colors[hc] is True else hc) for pc, hc in nhclnew[1:]]
                 self.replace_with(hcl, self.hash_recursive(nn))
             if self.is_and(nhclnew):
@@ -563,6 +592,59 @@ class AOBS:
         _, self.root = self.normalize(self.root)
         self.cleanup()
         if debug_draw: self.draw(window_header="4\nnormalized\nand\ncleaned!\n:)")
+
+    @staticmethod
+    def _multiply(bs1, bs2):
+        return [
+            ( p1*p2, sorted(tuple(ps1 + ps2)) )
+            for p2, ps2 in bs2
+            for p1, ps1 in bs1
+        ]
+
+    @staticmethod
+    def _simplify(bs):
+        states = {}
+        for p, ps in bs:
+            h = hash(ps)
+            if h in states:
+                found = False
+                for i, (hp, hps) in enumerate(states[h]):
+                    if hps == ps:
+                        states[h] = (p + hp, ps)
+                        found = True
+                if not found:
+                    states[h].append((p, ps))
+            else:
+                states[h] = [(p, ps)]
+        return [(p, ps) for _, state in states.items() for p, ps in state]
+
+
+
+    def as_collection_rec(self, h):
+        n = self.nodes[h]
+        if self.is_literal(n):
+            return [(1, [n])]
+        if self.is_and(n):
+            return functools.reduce(self._multiply, (self.as_collection_rec(hc) for hc in n[1:]))
+        if self.is_or(n):
+            return functools.reduce(operator.add, ([(pr * pc, hr) for pr, hr in self.as_collection_rec(hc)] for pc, hc in n[1:]))
+        assert False
+
+    def as_collection(self):
+        return self.as_collection_rec(self.root)
+
+    def from_collection(self, states):
+        if len(states) > 1:
+            d = ['o'] +\
+                [
+                    (pc, ['a'] + nc) for pc, nc in states
+                ]
+            self.root = self.hash_recursive(
+                d
+            )
+        else:
+            self.root = self.hash_recursive(['a'] + states[0][1])
+        self.cleanup()
 
 
 if __name__ == "__main__":
@@ -625,7 +707,7 @@ if __name__ == "__main__":
     ]
     A = AOBS()
     A.root = A.hash_recursive(a)
-    A.draw(window_header="initial")
+    # A.draw(window_header="initial")
     """
     To initialize AOBS we recursively hash all subgraphs. 
     hash_recursive() has insert=True by default, so (hash, subgraph) are memorized in A.nodes
@@ -648,7 +730,7 @@ if __name__ == "__main__":
     """
     B = AOBS()
     B.root = B.hash_recursive(action)
-    B.draw(window_header="action")
+    # B.draw(window_header="action")
     """
     We apply actions to selected substates.
     We select substates by following logical formula: f(v0) and f(v1) and ... and f(vN)
@@ -656,12 +738,12 @@ if __name__ == "__main__":
     So we pass list  [(v_i, f(v_i)), ...]
     """
     A.act([(2, lambda c: c > 0)], action)
-    A.draw(window_header="applied first\nfor c > 0")
+    # A.draw(window_header="applied first\nfor c > 0")
     """
     Pfff.. magic happened.
     """
     A.act([(2, lambda c: c > 0), (1, lambda b: b == 7)], action, debug_draw=False)
-    A.draw(window_header="then for \nc > 0 and b == 7")
+    # A.draw(window_header="then for \nc > 0 and b == 7")
     """
     And once more time!
     """
@@ -669,5 +751,8 @@ if __name__ == "__main__":
     To look inside turn on the parameter "debug_draw"
     """
     A.act([(0, lambda a: a == 7)], action, debug_draw=True)
-
+    A.draw(window_header="result")
+    C = AOBS()
+    C.from_collection(A.as_collection())
+    C.draw(window_header="states")
     Gtk.main()
