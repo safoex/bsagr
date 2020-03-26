@@ -750,7 +750,13 @@ if __name__ == "__main__":
     """
     To look inside turn on the parameter "debug_draw"
     """
-    A.act([(0, lambda a: a == 7)], action, debug_draw=True)
+    A.act([(0, lambda a: a == 7)], action, debug_draw=False)
+    A.act([(0, lambda a: a == 7)], action, debug_draw=False)
+    A.act([(0, lambda a: a == 7)], action, debug_draw=False)
+    A.act([(0, lambda a: a == 7)], action, debug_draw=False)
+    A.act([(0, lambda a: a == 7)], action, debug_draw=False)
+    A.act([(0, lambda a: a == 7)], action, debug_draw=False)
+    A.act([(0, lambda a: a == 7)], action, debug_draw=False)
     A.draw(window_header="result")
     C = AOBS()
     C.from_collection(A.as_collection())
