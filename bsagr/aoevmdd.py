@@ -2,8 +2,9 @@ import copy
 import xdot
 
 from gi.repository import Gtk
-import functools
+import functools, itertools
 import operator
+from queue import PriorityQueue
 
 
 class AOBS:
@@ -380,7 +381,7 @@ class AOBS:
                         black_or.append((1, ['a']))
                     for i, r in enumerate(reds):
                         red_and.append(r)
-                        for j, (_, b) in black_or[1:]:
+                        for j, (_, b) in enumerate(black_or[1:]):
                             if j == i:
                                 b.append(blacks[i])
                             else:
@@ -618,8 +619,6 @@ class AOBS:
                 states[h] = [(p, ps)]
         return [(p, ps) for _, state in states.items() for p, ps in state]
 
-
-
     def as_collection_rec(self, h):
         n = self.nodes[h]
         if self.is_literal(n):
@@ -629,6 +628,14 @@ class AOBS:
         if self.is_or(n):
             return functools.reduce(operator.add, ([(pr * pc, hr) for pr, hr in self.as_collection_rec(hc)] for pc, hc in n[1:]))
         assert False
+
+    def count_physical_states_real(self):
+        x = AOBS()
+        x.from_collection(self.as_collection())
+        return sum(x.is_and(n) for _, n in x.nodes.items())
+
+    def dag_size(self):
+        return sum(2 * len(n) - 1 if self.is_or(n) else len(n) for _, n in self.nodes.items())
 
     def as_collection(self):
         return self.as_collection_rec(self.root)
@@ -645,6 +652,137 @@ class AOBS:
         else:
             self.root = self.hash_recursive(['a'] + states[0][1])
         self.cleanup()
+
+    def prob_rec(self, h, colors):
+        n = self.nodes[h]
+        if self.is_or(n):
+            if colors[h] is None:
+                return sum(pc * self.prob_rec(hc, colors) for pc, hc in n[1:] )
+            if colors[h] is True:
+                return 1
+            if colors[h] is False:
+                return 0
+        if self.is_and(n):
+            if colors[h] is False:
+                return 0
+            else:
+                return functools.reduce(operator.mul, (self.prob_rec(hc, colors) for hc in n[1:]))
+        if self.is_literal(n):
+            if h not in colors:
+                return 1
+            elif colors[h] is False:
+                return 0
+            else:
+                return 1
+        assert False
+
+    def prob(self, cfs):
+        """
+        get probability of conditions set [(var, f(var)]
+        :param cfs: list of tuples (var_i, f(var_i))
+        :return: 0 <= p <= 1
+        """
+        true_literals, colors = self.get_true_literals_from_conditions(cfs)
+        self.colorize(self.root, colors, {})
+        return self.prob_rec(self.root, colors)
+
+    def compute_all_fractions_of_and(self):
+        sets = {h for h, n in self.nodes.items() if self.is_and(n)}
+        while True:
+            to_add = set()
+            for a in itertools.product(sets, sets):
+                s = []
+                for i in (0,1):
+                    n = self.nodes[a[i]]
+                    s.append( set(n[1:]))
+                i_d = s[0].intersection(s[1]), s[0].symmetric_difference(s[1])
+                for s in i_d:
+                    a = ['a'] + list(s)
+                    h = self.hash_recursive(a)
+                    if h not in sets:
+                        to_add.add(h)
+            if len(to_add) == 0:
+                break
+            else:
+                sets.update(to_add)
+                print(len(sets), len(to_add))
+        return sets
+
+    def count_greedy_effect(self, nodes_as_ands, h_multi=1, threshold=3):
+        _ands = nodes_as_ands
+        initial_lens = sum((len(n) -1) * h_multi + 1 for _, _, n in _ands)
+        ands = PriorityQueue()
+        hands = {}
+        for _and in _ands:
+            ands.put_nowait(_and)
+            hands[_and[1]] = _and
+        since_last_get = 0
+        iters = 0
+        while not ands.empty() and iters < 500:
+            l, ha, na = ands.get_nowait()
+            sa = set(na[1:])
+            biggest_intersection, h_big = 0, None
+            for _, hb, nb in hands.values():
+                if hb != ha:
+                    inter = set(nb[1:]).intersection(sa)
+                    if len(inter) > biggest_intersection:
+                        biggest_intersection = len(inter)
+                        h_big = hb
+            if biggest_intersection > threshold:
+                _, _, n_big = hands[h_big]
+                inter = set(n_big[1:]).intersection(sa)
+                dif = sa.difference(inter)
+                # adif = ['a'] + list(dif)
+                ainter = ['a'] + list(inter)
+                # hdif = self.hash_recursive(adif)
+                hinter = self.hash_recursive(ainter,insert=False)
+                anew = ['a', hinter] + list(dif)
+                hnew = self.hash_recursive(anew,insert=False)
+                # if hdif not in hands:
+                #     dif_and = -len(adif), hdif, adif
+                #     ands.put_nowait(dif_and)
+                #     hands[hdif] = dif_and
+                if hinter not in hands:
+                    inter_and = -len(ainter), hinter, ainter
+                    ands.put_nowait(inter_and)
+                    hands[hinter] = inter_and
+                hands.pop(ha)
+                if hnew not in hands:
+                    _and_new = -len(anew), hnew, anew
+                    hands[hnew] = _and_new
+                    ands.put_nowait(_and_new)
+                since_last_get = 0
+            else:
+                since_last_get += 1
+            iters += 1
+        if ands.empty():
+            after_lens = sum((len(n) -1) * h_multi + 1 for _, _, n in hands.values())
+        else:
+            after_lens = initial_lens
+        return initial_lens, after_lens
+
+    def count_and_greedy_effect(self, threshold=3):
+        _ands = list(
+            (-len(na), ha, na) for ha, na in self.nodes.items() if self.is_and(na)
+        )
+        return self.count_greedy_effect(_ands,threshold=threshold)
+
+    def count_or_greedy_effect(self, threshold=2, include_prob=True):
+        _ors = []
+        h_multi = 2 if include_prob else 1
+        for ha, na in self.nodes.items():
+            if self.is_or(na):
+                as_a = ['a'] + [h for _, h in na[1:]]
+                _ors.append((len(as_a), self.hash_recursive(as_a,insert=False), as_a))
+        return self.count_greedy_effect(_ors, h_multi=h_multi, threshold=threshold)
+
+    def size_after_greedy(self, threshold_and=2, threshold_or=3, include_prob=True):
+        lit_size = sum(self.is_literal(n) for n in self.nodes.values())
+        and_size = self.count_and_greedy_effect(threshold_and)[1]
+        or_size = self.count_or_greedy_effect(threshold_or,include_prob=include_prob)[1]
+        return lit_size + and_size + or_size
+
+
 
 
 if __name__ == "__main__":
@@ -737,12 +875,12 @@ if __name__ == "__main__":
     some f(v_i) can be True(v_i).
     So we pass list  [(v_i, f(v_i)), ...]
     """
-    A.act([(2, lambda c: c > 0)], action)
+    A.act([(2, lambda c: c > 0)], action, debug_draw=True)
     # A.draw(window_header="applied first\nfor c > 0")
     """
     Pfff.. magic happened.
     """
-    A.act([(2, lambda c: c > 0), (1, lambda b: b == 7)], action, debug_draw=False)
+    A.act([(2, lambda c: c > 0), (1, lambda b: b == 7)], action)
     # A.draw(window_header="then for \nc > 0 and b == 7")
     """
     And once more time!
