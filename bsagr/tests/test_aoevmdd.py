@@ -15,6 +15,8 @@ class RandomExploration:
         self.bdd_expr = None
         self.bdd_var_names = [self.var_name(i) for i in range(self.total_vars)]
         self.with_bdd = with_bdd
+        self.steps_made = 0
+        self.belief_state_size_threshold = 1e6
         # TODO: 0 <= values < self.max_value !
 
     @staticmethod
@@ -121,6 +123,7 @@ class RandomExploration:
         initial_state = self.random_init()
         actions_applied = []
         j = 0
+        self.steps_made = 0
         while len(actions_applied) < steps:
             preconditions, action, preconditions_bdd = self.generate_random_action(precs, effects, each)
             if self.aobs.prob(preconditions) > 0:
@@ -132,6 +135,9 @@ class RandomExploration:
                     self.act_bdd(preconditions_bdd, action)
                 actions_applied.append((preconditions_bdd, action))
                 j = 0
+                self.steps_made = len(actions_applied)
+                if self.aobs.estimate_number_of_states() * self.total_vars > self.belief_state_size_threshold:
+                    return True
                 # print(len(actions_applied))
             else:
                 j += 1
@@ -161,56 +167,69 @@ if __name__ == "__main__":
     #     pickle.dump(res, f)
     z = 0
     def test_bdd(total_vars, steps, max_value, effects=3, vars_in_each_effect=3, preconditions=3):
-        re = RandomExploration(total_vars=total_vars, max_value=max_value, with_bdd=True)
-        while not re.random_exploration(steps, precs=preconditions, effects=effects, each=vars_in_each_effect):
-            pass
-        re.bdd.collect_garbage()
-        sizes = dict(total=re.total_vars * re.aobs.count_physical_states_real(),
-                aobs=re.aobs.dag_size(),
-                aobs_greedy=re.aobs.size_after_greedy(include_prob=True),
-                total_naive_dup=len(re.aobs.as_collection()) * re.total_vars,
-                bdd=re.bdd_expr.dag_size
-                     )
-        global z
-        z += 1
-        print(z)
-        return dict(
-            total_vars=re.total_vars,
-            max_value=re.max_value,
-            steps=steps,
-            preconditions=preconditions,
-            effects=effects,
-            vars_in_each_effect=vars_in_each_effect,
-            sizes=sizes,
-            re=re
-        )
+        try:
+            re = RandomExploration(total_vars=total_vars, max_value=max_value, with_bdd=True)
+            while not re.random_exploration(steps, precs=preconditions, effects=effects, each=vars_in_each_effect):
+                pass
+            re.bdd.collect_garbage()
+            sizes = dict(total=re.total_vars * re.aobs.count_physical_states_real(),
+                    aobs=re.aobs.dag_size(),
+                    aobs_greedy=re.aobs.size_after_greedy(include_prob=True),
+                    total_naive_dup=len(re.aobs.as_collection()) * re.total_vars,
+                    bdd=re.bdd_expr.dag_size
+                         )
+            global z
+            z += 1
+            print(sizes)
+            return dict(
+                total_vars=re.total_vars,
+                max_value=re.max_value,
+                steps=re.steps_made,
+                preconditions=preconditions,
+                effects=effects,
+                vars_in_each_effect=vars_in_each_effect,
+                sizes=sizes,
+                re=re
+            )
+        except BaseException as e:
+            return {}
 
     # print(test_bdd(steps=20, total_vars=40, max_value=4, effects=5, vars_in_each_effect=8)['sizes'])
 
+
+
+
     t = str(time.time())
-    # steps dependency
-    experiment1 = list(Parallel(n_jobs=11)(delayed(test_bdd)(steps=steps,total_vars=40, max_value=max_value) for i, steps, max_value in
-                                              itertools.product(range(100), range(5, 35, 2), [2, 4, 8])))
+
+    experiment1 = list(Parallel(n_jobs=8)(
+        delayed(test_bdd)(steps=20, total_vars=50, max_value=4) for i in range(200)))
     print("experiment1 done")
     with open("experiment1_" + t + ".nds", 'wb') as f:
         pickle.dump(experiment1, f)
 
-    # vars number and limit dependency
-    experiment2 = list(Parallel(n_jobs=11)(delayed(test_bdd)(steps=20,total_vars=total_vars, max_value=max_value) for i, total_vars, max_value in
-                                              itertools.product(range(100), range(5, 35, 5), [2, 4, 8])))
-
-    print("experiment2 done")
-    with open("experiment2_" + t + ".nds", 'wb') as f:
-        pickle.dump(experiment2, f)
-
-    # action properties dependency
-    experiment3 = list(Parallel(n_jobs=11)(
-        delayed(test_bdd)(steps=20, total_vars=40, max_value=4, effects=effects, vars_in_each_effect=vars_in_each) for i, effects, vars_in_each in
-        itertools.product(range(100), range(2, 4), [1, 2, 4, 8])))
-
-    print("experiment3 done")
-    with open("experiment3_" + t + ".nds", 'wb') as f:
-        pickle.dump(experiment2, f)
+    # # steps dependency
+    # experiment1 = list(Parallel(n_jobs=11)(delayed(test_bdd)(steps=steps,total_vars=40, max_value=max_value) for i, steps, max_value in
+    #                                           itertools.product(range(100), range(5, 35, 2), [2, 4, 8])))
+    # print("experiment1 done")
+    # with open("experiment1_" + t + ".nds", 'wb') as f:
+    #     pickle.dump(experiment1, f)
+    #
+    # # vars number and limit dependency
+    # experiment2 = list(Parallel(n_jobs=11)(delayed(test_bdd)(steps=20,total_vars=total_vars, max_value=max_value) for i, total_vars, max_value in
+    #                                           itertools.product(range(100), range(5, 35, 5), [2, 4, 8])))
+    #
+    # print("experiment2 done")
+    # with open("experiment2_" + t + ".nds", 'wb') as f:
+    #     pickle.dump(experiment2, f)
+    #
+    # # action properties dependency
+    # experiment3 = list(Parallel(n_jobs=11)(
+    #     delayed(test_bdd)(steps=20, total_vars=40, max_value=4, effects=effects, vars_in_each_effect=vars_in_each) for i, effects, vars_in_each in
+    #     itertools.product(range(100), range(2, 4), [1, 2, 4, 8])))
+    #
+    # print("experiment3 done")
+    # with open("experiment3_" + t + ".nds", 'wb') as f:
+    #     pickle.dump(experiment2, f)
 
 # t['re'].aobs.draw()
     # Gtk.main()

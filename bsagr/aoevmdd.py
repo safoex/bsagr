@@ -5,10 +5,11 @@ from gi.repository import Gtk
 import functools, itertools
 import operator
 from queue import PriorityQueue
+import subprocess, os
 
 
 class AOBS:
-    def __init__(self):
+    def __init__(self, precision=3):
         """
         descriptive example of empty constructor
         """
@@ -17,9 +18,10 @@ class AOBS:
         self.parents = {}
         self.hash_limit = 2
         self.hash_seeds = [1343452, 12432]
-        self.root = self.hash_recursive([0, 0.0])
+        self.root = self.hash_recursive([int(0), int(0)])
         self.colors = ['green', 'red', 'purple']
-        self.precision = 3
+        self.shapes = [ ]
+        self.precision = precision
         self.windows = []
 
     @staticmethod
@@ -47,8 +49,19 @@ class AOBS:
                 return self.colors[2]
         else:
             return "black"
+    
+    def get_shape(self, h, shapes):
+        if shapes is not None and h in shapes:
+            if shapes[h] is True:
+                return self.shapes[0]
+            elif shapes[h] is False:
+                return self.shapes[1]
+            else:
+                return self.shapes[2]
+        else:
+            return "black"
 
-    def req_dot_str_ver(self, h, colors, drawn):
+    def req_dot_str_ver(self, h, colors, shapes, drawn):
         if h in drawn:
             return ""
         drawn[h] = True
@@ -61,21 +74,24 @@ class AOBS:
             hs += "AND"
         if self.is_literal(n):
             hs += self.get_var_name(n[0]) + " = " + str(n[1])
+        hs += "\""
         shape = "rectangle" if self.is_literal(n) else "circle"
-        hs += "\",shape=%s, color=%s];\n" % (shape, self.get_color(h, colors))
+        if shapes is not None and h in shapes and shapes[h] is True:
+            hs += "style=filled"
+        hs += ",shape=%s, color=%s];\n" % (shape, self.get_color(h, colors))
         if self.is_or(n):
             for pc, hc in n[1:]:
                 hs += hl + "-> " + self.hname(hc) + (" [ label=\"%." + "%d" % self.precision + "f\"] ;\n") % pc
             for _, hc in n[1:]:
-                hs += self.req_dot_str_ver(hc, colors, drawn)
+                hs += self.req_dot_str_ver(hc, colors, shapes, drawn)
         if self.is_and(n):
             for hc in n[1:]:
                 hs += hl + " -> " + self.hname(hc) + ";\n"
             for hc in n[1:]:
-                hs += self.req_dot_str_ver(hc, colors, drawn)
+                hs += self.req_dot_str_ver(hc, colors, shapes, drawn)
         return hs
 
-    def dot_str(self, colors=None, start=None, window_header=None):
+    def dot_str(self, colors=None, shapes=None, start=None, window_header=None):
         return \
             """digraph %s { 
                     rankdir=TD;
@@ -84,7 +100,7 @@ class AOBS:
             """ % ("aobs") \
             + (
                 "" if window_header is None or (isinstance(window_header, int) and window_header < 0) else "AA[label=\"%s\"shape=rectangle, color=blue];\n" % str(window_header)) \
-            + self.req_dot_str_ver(start or self.root, colors, {}) \
+            + self.req_dot_str_ver(start or self.root, colors, shapes, {}) \
             + "\n}"
 
     def insert(self, h, tnode):
@@ -528,10 +544,28 @@ class AOBS:
         for h in set(self.nodes.keys()).difference(visited):
             self.nodes.pop(h)
 
-    def draw(self, colors=None, start=None, window_header=None):
-        win = xdot.DotWindow()
-        win.set_dotcode(bytes(self.dot_str(colors, start, window_header or len(self.windows)), 'utf-8'))
-        self.windows.append(win)
+    def draw(self, colors=None, shapes=None, start=None, window_header=None, file_prefix=None):
+        if file_prefix is not None:
+            self.draw_to_pdf(file_prefix+str(len(self.windows))+".pdf", colors, shapes, start, window_header)
+            self.windows.append("kek")
+        else:
+            win = xdot.DotWindow()
+            win.set_dotcode(bytes(self.dot_str(colors, shapes, start,  window_header or len(self.windows)), 'utf-8'))
+            self.windows.append(win)
+
+    def draw_to_pdf(self, outfile="_tmp.pdf", colors=None, shapes=None, start=None, window_header=None):
+        print(outfile)
+        dotcode = self.dot_str(colors, shapes, start, window_header or len(self.windows))
+        tmp_file_name = "___draw_out.txt"
+        with open(tmp_file_name, "w") as f:
+            print(dotcode, file=f)
+        bashCommands = [
+            "dot %s -Tpdf > %s" % (tmp_file_name, outfile),
+            "rm %s" % tmp_file_name
+        ]
+        for bashCommand in bashCommands:
+            os.system(bashCommand)
+
 
     def black_colors_for_variables(self, vars_list):
         colors = {}
@@ -546,24 +580,34 @@ class AOBS:
             colors[self.hash_recursive(hl)] = True
         return colors
 
-    def act(self, cfs, action, debug_draw=False):
+    def act(self, cfs, action, debug_draw=False, debug_draw_letters=True, draw_file_prefix=None):
         action_subset = self.variablize(self.hash_recursive(action), {})
         true_literals, colors = self.get_true_literals_from_conditions(cfs)
         true_literals_initial, colors_initial = self.get_true_literals_from_conditions(cf for cf in cfs if cf[0] not in action_subset)
         req_subset = set()
+        #
+        i_colors = copy.deepcopy(colors)
+        #
         for tl in true_literals_initial:
             req_subset.add(self.nodes[tl][0])
         req_subset.update(action_subset)
         self.colorize(self.root, colors_initial, {})
         self.colorize(self.root, colors, {})
-        if debug_draw: self.draw(colors=colors_initial, window_header="1\ncolorized according to conditions:\ngreen - True, red - False, purple - mixed (OR and up)")
+        if debug_draw:
+            self.draw(colors=colors_initial, window_header="1\ncolorized according to conditions:\ngreen - True, red - False, purple - mixed (OR and up)" if debug_draw_letters else -1, file_prefix=draw_file_prefix)
         variables = {}
         self.variablize(self.root, variables)
         min_clusters = {}
         self.find_min_clusters(self.root, variables, colors_initial, req_subset, min_clusters)
-        if debug_draw: self.draw(colors=min_clusters, window_header="2\nfound minimal clusters (green) which are subgraphs,\n where we should apply actions")
+        if debug_draw: self.draw(colors=colors, shapes=min_clusters, window_header="2\nfound minimal clusters (green) which are subgraphs,\n where we should apply actions" if debug_draw_letters else -1, file_prefix=draw_file_prefix)
         clusters = [h for h, v in min_clusters.items() if v]
         new_clusters = [self.normalize(self.isolate(hcl, colors))[1] for hcl in clusters]
+        #
+        for hcl, hclnew in zip(clusters, new_clusters):
+            self.replace_with(hcl, hclnew)
+        self.colorize(self.root, i_colors, {})
+        if debug_draw: self.draw(colors=i_colors, shapes={hnc: True for hnc in new_clusters}, window_header=-1, file_prefix=draw_file_prefix)
+        #
         for hcl, hclnew in zip(clusters, new_clusters):
             nhclnew = self.nodes[hclnew]
             self.colorize(hclnew, colors, {})
@@ -585,14 +629,14 @@ class AOBS:
                 #         # self.draw(start=hclnew, colors=local_min_clusters)
 
                 nn = ['o'] + [(pc, self.act_on(hc, action) if colors[hc] is True else hc) for pc, hc in nhclnew[1:]]
-                self.replace_with(hcl, self.hash_recursive(nn))
+                self.replace_with(hclnew, self.hash_recursive(nn))
             if self.is_and(nhclnew):
                 w = self.act_on(hclnew, action)
-                self.replace_with(hcl, w)
-        if debug_draw: self.draw(window_header="3\nbefore normalization procedure")
+                self.replace_with(hclnew, w)
+        if debug_draw: self.draw(window_header="3\nbefore normalization procedure" if debug_draw_letters else -1, file_prefix=draw_file_prefix)
         _, self.root = self.normalize(self.root)
         self.cleanup()
-        if debug_draw: self.draw(window_header="4\nnormalized\nand\ncleaned!\n:)")
+        if debug_draw: self.draw(window_header="4\nnormalized\nand\ncleaned!\n:)" if debug_draw_letters else -1, file_prefix=draw_file_prefix)
 
     @staticmethod
     def _multiply(bs1, bs2):
@@ -628,6 +672,18 @@ class AOBS:
         if self.is_or(n):
             return functools.reduce(operator.add, ([(pr * pc, hr) for pr, hr in self.as_collection_rec(hc)] for pc, hc in n[1:]))
         assert False
+
+    def estimate_number_of_states_rec(self, h):
+        n = self.nodes[h]
+        if self.is_literal(n):
+            return 1
+        if self.is_and(n):
+            return functools.reduce(operator.mul, (self.estimate_number_of_states_rec(h) for h in n[1:]))
+        if self.is_or(n):
+            return functools.reduce(operator.add, (self.estimate_number_of_states_rec(h) for _, h in n[1:]))
+
+    def estimate_number_of_states(self):
+        return self.estimate_number_of_states_rec(self.root)
 
     def count_physical_states_real(self):
         x = AOBS()
@@ -825,7 +881,7 @@ if __name__ == "__main__":
                     'o',
                     (0.3, [
                         'a',
-                        [1, 0],
+                        [1, 2],
                         [2, 0]
                     ]),
                     (0.7, [
@@ -843,7 +899,7 @@ if __name__ == "__main__":
             (0.8, [3, 1])
         ]
     ]
-    A = AOBS()
+    A = AOBS(precision=1)
     A.root = A.hash_recursive(a)
     # A.draw(window_header="initial")
     """
@@ -875,7 +931,7 @@ if __name__ == "__main__":
     some f(v_i) can be True(v_i).
     So we pass list  [(v_i, f(v_i)), ...]
     """
-    A.act([(2, lambda c: c > 0)], action, debug_draw=True)
+    A.act([(2, lambda c: c > 0)], action, debug_draw=True, debug_draw_letters=False, draw_file_prefix="gen_img/test0_")
     # A.draw(window_header="applied first\nfor c > 0")
     """
     Pfff.. magic happened.
@@ -895,8 +951,29 @@ if __name__ == "__main__":
     A.act([(0, lambda a: a == 7)], action, debug_draw=False)
     A.act([(0, lambda a: a == 7)], action, debug_draw=False)
     A.act([(0, lambda a: a == 7)], action, debug_draw=False)
-    A.draw(window_header="result")
+    # A.draw(window_header="result")
+    # A.draw(window_header=-1)
     C = AOBS()
     C.from_collection(A.as_collection())
-    C.draw(window_header="states")
-    Gtk.main()
+    # C.draw(window_header="states")
+    # Gtk.main()
+
+if __name__ == "__main__" and False:
+    example = [
+        'a',
+        [0,1],
+        [
+            'o',
+            (0.4, [1, 0]),
+            (0.6, [1, 1])
+        ],
+        [
+            'o',
+            (0.7, [2, 0]),
+            (0.3, [2, 1])
+        ]
+    ]
+    A = AOBS(precision=1)
+    A.root = A.hash_recursive(example)
+    A.draw_to_pdf(outfile="simple_example.pdf", window_header=-1)
+    # Gtk.main()
