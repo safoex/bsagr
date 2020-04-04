@@ -841,7 +841,7 @@ class AOBS:
 
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and False:
     """
     Hi! Thank you for reading me.
     """
@@ -976,4 +976,95 @@ if __name__ == "__main__" and False:
     A = AOBS(precision=1)
     A.root = A.hash_recursive(example)
     A.draw_to_pdf(outfile="simple_example.pdf", window_header=-1)
+    # Gtk.main()
+
+if __name__ == "__main__":
+    example1 = [
+        'o',
+        (0.5, [
+            'a',
+            [0, 0],
+            [
+                'o',
+                (0.4, [1, 0]),
+                (0.6, [1, 1])
+            ]
+        ]),
+        (0.5,[
+            'a',
+            [0, 1],
+            [1, 1]
+        ])
+    ]
+    example2 = [
+        'o',
+        (0.8, [
+            'a',
+            [1, 1],
+            [
+                'o',
+                (0.375, [0, 0]),
+                (0.625, [0, 1])
+            ]
+        ]),
+        (0.2, [
+            'a',
+            [0, 0],
+            [1, 0]
+        ])
+    ]
+    A = AOBS(precision=1)
+    A.root = A.hash_recursive(example1)
+    A.draw_to_pdf(outfile="gen_img/example_equiv1.pdf", window_header=-1)
+    B = AOBS(precision=3)
+    B.root = B.hash_recursive(example2)
+    B.draw_to_pdf(outfile="gen_img/example_equiv2.pdf", window_header=-1)
+    # Gtk.main()
+
+if __name__ == "__main__":
+    A1 = [
+        'a',
+        [0, 0],
+        [1, 1],
+        [2, 0],
+        [3, 2],
+        [4, 1]
+    ]
+    A2 = [
+        'a',
+        [5, 3],
+        [1, 1],
+        [2, 0],
+        [3, 2],
+        [4, 1]
+    ]
+    A3 = [
+        'a',
+        [1, 1],
+        [2, 0],
+        [3, 2],
+        [4, 1]
+    ]
+    A11 = [
+        'a',
+        [0, 0],
+        A3
+    ]
+    A21 = [
+        'a',
+        [5, 3],
+        A3
+    ]
+    OR = [
+        'o',
+        (0.5, A11),
+        (0.5, A21)
+    ]
+    A = AOBS(precision=1)
+    a1 = A.hash_recursive(A1)
+    a2 = A.hash_recursive(A2)
+    oR = A.hash_recursive(OR)
+    A.draw_to_pdf(outfile="gen_img/and_1.pdf", window_header=-1, start=a1)
+    A.draw_to_pdf(outfile="gen_img/and_2.pdf", window_header=-1, start=a2)
+    A.draw_to_pdf(outfile="gen_img/and_12.pdf", window_header=-1, start=oR)
     # Gtk.main()
